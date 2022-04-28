@@ -10,9 +10,10 @@ import (
 )
 
 func main() {
-	n := 100
-	A := generateMatrix(10, -10, n, n)
-	B := generateMatrix(10, -10, 1, n)
+	n := 1000
+	maxValue := 5
+	A := generateMatrix(maxValue, -maxValue, n, n)
+	B := generateMatrix(maxValue, -maxValue, 1, n)
 	A = generateMatrixPD(A)
 	writeFile(A, n, "./A.txt")
 	writeFile(B, n, "./B.txt")

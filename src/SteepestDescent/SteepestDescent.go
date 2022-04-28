@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,9 +12,7 @@ import (
 )
 
 func main() {
-	nCPU := runtime.NumCPU()
-	runtime.GOMAXPROCS(nCPU)
-
+	var x []float64
 	tolerance := 0.1
 	maxGoRoutines := 5
 
@@ -33,20 +30,177 @@ func main() {
 		return
 	}
 	start := time.Now()
-	x := evalSteepestDescent(A, b, tolerance)
+	// x := evalSteepestDescent(A, b, tolerance)
 	duration := time.Since(start)
-	fmt.Println("Linear", duration)
+	fmt.Println("Sequential", duration)
 
 	start = time.Now()
 	x = evalSteepestDescentParallel(A, b, tolerance, maxGoRoutines)
 	duration = time.Since(start)
-	fmt.Println("Parallel", duration)
+	fmt.Println("Concurrent", duration)
 
 	writeRoots(x, "result.txt")
 	// fmt.Println(A, b)
 
 	// x := [][]float64{{1,2,3},{1,2,3}}
 	// fmt.Println(evalScalarProduct(x,x))
+}
+
+func evalSteepestDescent(A [][]float64, b []float64, tolerance float64) []float64 {
+	n := len(b)
+	var alpha float64
+	x := make([]float64, n)
+	r := make([]float64, n)
+	var residual float64
+
+	copy(x, b)
+	copy(r, b)
+
+	residual = math.Sqrt(evalScalarProduct(r, r))
+	for tolerance < residual {
+		alpha = evalScalarProduct(r, r) / evalScalarProduct(r, evalMatrixVectorProduct(A, r))
+		r = gradF(A, x, b)
+		for i := 0; i < n; i++ {
+			x[i] = x[i] + alpha*r[i]
+		}
+
+		residual = math.Sqrt(evalScalarProduct(r, r))
+	}
+
+	return x
+}
+
+func evalSteepestDescentParallel(A [][]float64, b []float64, tolerance float64, maxGoRoutines int) []float64 {
+	n := len(b)
+	var alpha float64
+	x := make([]float64, n)
+	r := make([]float64, n)
+	var residual float64
+	sem := make(chan int)
+	var wg sync.WaitGroup
+
+	copy(x, b)
+	copy(r, b)
+
+	residual = math.Sqrt(evalScalarProductParallel(r, r))
+	for tolerance < residual {
+
+		go func() {
+			alpha = evalScalarProductParallel(r, r) / evalScalarProductParallel(r, evalMatrixVectorProductParallel(A, r))
+			sem <- 0
+		}()
+
+		go func() {
+			r = gradF(A, x, b)
+			sem <- 0
+		}()
+		<-sem
+		<-sem
+
+		wg.Add(n)
+		for i := 0; i < n; i++ {
+			go func(i int) {
+				x[i] = x[i] + alpha*r[i]
+				wg.Done()
+			}(i)
+
+		}
+		residual = math.Sqrt(evalScalarProductParallel(r, r))
+		wg.Wait()
+	}
+
+	return x
+}
+
+func evalScalarProduct(x []float64, y []float64) float64 {
+	product := 0.0
+
+	for i := 0; i < len(x); i++ {
+		product += x[i] * y[i]
+	}
+
+	return product
+
+}
+
+func evalScalarProductParallel(x []float64, y []float64) float64 {
+	sem := make(chan float64)
+	product := 0.0
+	n := len(x)
+
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			sem <- x[i] * y[i]
+		}(i)
+	}
+	for i := 0; i < n; i++ {
+		product += <-sem
+	}
+	return product
+
+}
+
+func evalMatrixVectorProduct(A [][]float64, x []float64) []float64 {
+	n := len(A)
+
+	result := make([]float64, len(A))
+
+	for i := 0; i < n; i++ {
+		for j := 0; j < n; j++ {
+			result[i] += A[i][j] * x[j]
+		}
+	}
+
+	return result
+}
+
+func evalMatrixVectorProductParallel(A [][]float64, x []float64) []float64 {
+	n := len(A)
+	var wg sync.WaitGroup
+
+	result := make([]float64, len(A))
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			for j := 0; j < n; j++ {
+				result[i] += A[i][j] * x[j]
+			}
+			wg.Done()
+		}(i)
+	}
+	wg.Wait()
+	return result
+}
+
+func gradF(A [][]float64, x []float64, b []float64) []float64 {
+	y := evalMatrixVectorProduct(A, x)
+	for i := 0; i < len(x); i++ {
+		y[i] = b[i] - y[i]
+	}
+
+	return y
+}
+
+func gradFParallel(A [][]float64, x []float64, b []float64) []float64 {
+	// sem := make(chan int)
+	var wg sync.WaitGroup
+
+	n := len(x)
+	y := evalMatrixVectorProduct(A, x)
+
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			y[i] = b[i] - y[i]
+			wg.Done()
+		}(i)
+	}
+	// for i := 0; i < n; i++ {
+	// 	<-sem
+	// }
+	wg.Wait()
+
+	return y
 }
 
 func writeRoots(vector []float64, filename string) {
@@ -124,163 +278,4 @@ func readMatrixFromFile(path string) ([][]float64, error) {
 	}
 
 	return matrix, scanner.Err()
-}
-
-func evalSteepestDescent(A [][]float64, b []float64, tolerance float64) []float64 {
-	n := len(b)
-	var alpha float64
-	x := make([]float64, n)
-	r := make([]float64, n)
-	var residual float64
-
-	copy(x, b)
-	copy(r, b)
-	// x = b
-	// r = b
-	residual = math.Sqrt(evalScalarProduct(r, r))
-	for tolerance < residual {
-		// rr := evalScalarProduct(r, r)
-		// ar := evalMatrixVectorProduct(A, r)
-		// rar := evalScalarProduct(r, ar)
-		// alpha = rr / rar
-		alpha = evalScalarProduct(r, r) / evalScalarProduct(r, evalMatrixVectorProduct(A, r))
-		r = gradF(A, x, b)
-		for i := 0; i < n; i++ {
-			x[i] = x[i] + alpha*r[i]
-		}
-
-		residual = math.Sqrt(evalScalarProduct(r, r))
-	}
-
-	return x
-}
-
-func evalSteepestDescentParallel(A [][]float64, b []float64, tolerance float64, maxGoRoutines int) []float64 {
-	n := len(b)
-	var alpha float64
-	x := make([]float64, n)
-	r := make([]float64, n)
-	var residual float64
-	// var wg sync.WaitGroup
-
-	copy(x, b)
-	copy(r, b)
-	// x = b
-	// r = b
-	residual = math.Sqrt(evalScalarProductParallel(r, r))
-	for tolerance < residual {
-		// wg.Add(2)
-		// go func() {
-		// 	defer wg.Done()
-		alpha = evalScalarProductParallel(r, r) / evalScalarProductParallel(r, evalMatrixVectorProductParallel(A, r))
-		// }()
-
-		// go func() {
-		// defer wg.Done()
-		r = gradF(A, x, b)
-		// }()
-		// wg.Wait()
-		for i := 0; i < n; i++ {
-			// wg.Add(1)
-			// go func(i int) {
-			// 	defer wg.Done()
-			// 	x[i] = x[i] + alpha*r[i]
-			// }(i)
-			x[i] = x[i] + alpha*r[i]
-
-		}
-		// wg.Wait()
-		residual = math.Sqrt(evalScalarProductParallel(r, r))
-
-	}
-
-	return x
-}
-
-func evalScalarProduct(x []float64, y []float64) float64 {
-	product := 0.0
-
-	for i := 0; i < len(x); i++ {
-		product += x[i] * y[i]
-	}
-
-	return product
-
-}
-
-func evalScalarProductParallel(x []float64, y []float64) float64 {
-	product := 0.0
-	var wg sync.WaitGroup
-
-	for i := 0; i < len(x); i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			product += x[i] * y[i]
-		}(i)
-	}
-	wg.Wait()
-
-	return product
-
-}
-
-func evalMatrixVectorProduct(A [][]float64, x []float64) []float64 {
-	n := len(A)
-
-	result := make([]float64, len(A))
-
-	for i := 0; i < n; i++ {
-		for j := 0; j < n; j++ {
-			result[i] += A[i][j] * x[j]
-		}
-	}
-
-	return result
-}
-
-func evalMatrixVectorProductParallel(A [][]float64, x []float64) []float64 {
-	n := len(A)
-	var wg sync.WaitGroup
-
-	result := make([]float64, len(A))
-
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			for j := 0; j < n; j++ {
-				result[i] += A[i][j] * x[j]
-			}
-		}(i)
-
-	}
-	wg.Wait()
-
-	return result
-}
-
-func gradF(A [][]float64, x []float64, b []float64) []float64 {
-	y := evalMatrixVectorProduct(A, x)
-	for i := 0; i < len(x); i++ {
-		y[i] = b[i] - y[i]
-	}
-
-	return y
-}
-
-func gradFParallel(A [][]float64, x []float64, b []float64) []float64 {
-	var wg sync.WaitGroup
-
-	y := evalMatrixVectorProduct(A, x)
-	for i := 0; i < len(x); i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			y[i] = b[i] - y[i]
-		}(i)
-	}
-	wg.Wait()
-
-	return y
 }
