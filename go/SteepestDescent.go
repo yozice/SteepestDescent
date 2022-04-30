@@ -7,14 +7,13 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
 func main() {
 	var x []float64
 	tolerance := 0.1
-	maxGoRoutines := 5
+	maxGoRoutines := 12
 
 	A, err1 := readMatrixFromFile("./A.txt")
 	if err1 != nil {
@@ -30,7 +29,7 @@ func main() {
 		return
 	}
 	start := time.Now()
-	x = evalSteepestDescent(A, b, tolerance)
+	// x = evalSteepestDescent(A, b, tolerance)
 	duration := time.Since(start)
 	fmt.Println("Sequential", duration)
 
@@ -76,8 +75,7 @@ func evalSteepestDescentParallel(A [][]float64, b []float64, tolerance float64, 
 	x := make([]float64, n)
 	r := make([]float64, n)
 	var residual float64
-	sem := make(chan int)
-	var wg sync.WaitGroup
+	sem := make(chan empty, 1)
 
 	copy(x, b)
 	copy(r, b)
@@ -87,26 +85,33 @@ func evalSteepestDescentParallel(A [][]float64, b []float64, tolerance float64, 
 
 		go func() {
 			alpha = evalScalarProductParallel(r, r) / evalScalarProductParallel(r, evalMatrixVectorProductParallel(A, r))
-			sem <- 0
+
+			sem <- empty{}
 		}()
+
+		r = gradFParallel(A, x, b, maxGoRoutines)
+		<-sem
 
 		go func() {
-			r = gradF(A, x, b)
-			sem <- 0
+			x = evalXParallel(x, alpha, r)
+			sem <- empty{}
 		}()
-		<-sem
-		<-sem
 
-		wg.Add(n)
-		for i := 0; i < n; i++ {
-			go func(i int) {
-				x[i] = x[i] + alpha*r[i]
-				wg.Done()
-			}(i)
-
-		}
 		residual = math.Sqrt(evalScalarProductParallel(r, r))
-		wg.Wait()
+		<-sem
+	}
+
+	return x
+}
+
+type empty struct{}
+
+func evalXParallel(x []float64, alpha float64, r []float64) []float64 {
+	n := len(x)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			x[i] = x[i] + alpha*r[i]
+		}(i)
 	}
 
 	return x
@@ -124,18 +129,15 @@ func evalScalarProduct(x []float64, y []float64) float64 {
 }
 
 func evalScalarProductParallel(x []float64, y []float64) float64 {
-	sem := make(chan float64)
 	product := 0.0
 	n := len(x)
 
 	for i := 0; i < n; i++ {
 		go func(i int) {
-			sem <- x[i] * y[i]
+			product += x[i] * y[i]
 		}(i)
 	}
-	for i := 0; i < n; i++ {
-		product += <-sem
-	}
+
 	return product
 
 }
@@ -156,19 +158,15 @@ func evalMatrixVectorProduct(A [][]float64, x []float64) []float64 {
 
 func evalMatrixVectorProductParallel(A [][]float64, x []float64) []float64 {
 	n := len(A)
-	var wg sync.WaitGroup
 
 	result := make([]float64, len(A))
-	wg.Add(n)
 	for i := 0; i < n; i++ {
 		go func(i int) {
 			for j := 0; j < n; j++ {
 				result[i] += A[i][j] * x[j]
 			}
-			wg.Done()
 		}(i)
 	}
-	wg.Wait()
 	return result
 }
 
@@ -181,24 +179,15 @@ func gradF(A [][]float64, x []float64, b []float64) []float64 {
 	return y
 }
 
-func gradFParallel(A [][]float64, x []float64, b []float64) []float64 {
-	// sem := make(chan int)
-	var wg sync.WaitGroup
-
+func gradFParallel(A [][]float64, x []float64, b []float64, maxGoRoutines int) []float64 {
 	n := len(x)
 	y := evalMatrixVectorProduct(A, x)
 
-	wg.Add(n)
 	for i := 0; i < n; i++ {
 		go func(i int) {
 			y[i] = b[i] - y[i]
-			wg.Done()
 		}(i)
 	}
-	// for i := 0; i < n; i++ {
-	// 	<-sem
-	// }
-	wg.Wait()
 
 	return y
 }
