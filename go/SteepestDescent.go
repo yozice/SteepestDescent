@@ -13,7 +13,6 @@ import (
 func main() {
 	var x []float64
 	tolerance := 0.1
-	maxGoRoutines := 12
 
 	A, err1 := readMatrixFromFile("./A.txt")
 	if err1 != nil {
@@ -34,7 +33,7 @@ func main() {
 	fmt.Println("Sequential", duration)
 
 	start = time.Now()
-	x = evalSteepestDescentParallel(A, b, tolerance, maxGoRoutines)
+	x = evalSteepestDescentParallel(A, b, tolerance)
 	duration = time.Since(start)
 	fmt.Println("Concurrent", duration)
 
@@ -69,7 +68,7 @@ func evalSteepestDescent(A [][]float64, b []float64, tolerance float64) []float6
 	return x
 }
 
-func evalSteepestDescentParallel(A [][]float64, b []float64, tolerance float64, maxGoRoutines int) []float64 {
+func evalSteepestDescentParallel(A [][]float64, b []float64, tolerance float64) []float64 {
 	n := len(b)
 	var alpha float64
 	x := make([]float64, n)
@@ -89,7 +88,7 @@ func evalSteepestDescentParallel(A [][]float64, b []float64, tolerance float64, 
 			sem <- empty{}
 		}()
 
-		r = gradFParallel(A, x, b, maxGoRoutines)
+		r = gradFParallel(A, x, b)
 		<-sem
 
 		go func() {
@@ -179,7 +178,7 @@ func gradF(A [][]float64, x []float64, b []float64) []float64 {
 	return y
 }
 
-func gradFParallel(A [][]float64, x []float64, b []float64, maxGoRoutines int) []float64 {
+func gradFParallel(A [][]float64, x []float64, b []float64) []float64 {
 	n := len(x)
 	y := evalMatrixVectorProduct(A, x)
 
