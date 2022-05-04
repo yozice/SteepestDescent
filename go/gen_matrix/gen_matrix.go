@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	n := 1000
+	n := 100
 	maxValue := 5
 	A := generateMatrix(maxValue, -maxValue, n, n)
 	B := generateMatrix(maxValue, -maxValue, 1, n)
